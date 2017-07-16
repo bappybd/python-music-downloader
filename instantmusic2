@@ -242,16 +242,16 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
     Returns the title of the video downloaded from.
     """
     
-    search = song['fullsongname']   
+    search = song['fullsongname']
     destination_filename = 'Download/'+search+'.mp3'
     if os.path.isfile(destination_filename):
         #print(destination_filename + " file already exists")
 	    return destination_filename
    
     if not is_quiet:
-        print('Searching..."'+search+'"')
+        print('\nSearching..."'+search+' lyrics"')
     
-    available = search_videos(search)    
+    available = search_videos(search+" lyrics")    
     if not is_quiet:
         if not available:
             print('No results found matching your query.')
@@ -278,21 +278,24 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
 
     command_tokens = [
         'youtube-dl',
+        '--quiet',
         '--extract-audio',
         '--audio-format mp3',
         '--audio-quality 0',
         '--output "Download/'+search+'.%(ext)s"',
         'https://www.youtube.com' + video_link]
-
+    
     if is_quiet:
         command_tokens.insert(1, '-q')
 
     #command = ' '.join(command_tokens)
     command = ' '.join(x.decode('utf-8') for x in command_tokens)
-        
+    
     # Youtube-dl is a proof that god exists.
     if not is_quiet:
-        print('Downloading..."'+command+'"')        
+        title, video_link = available[0]
+        #print('Downloading..."'+command+'"')
+        print('Downloading..."'+title.decode('utf-8')+', Video URL: '+video_link+'"')
     os.system(command.encode('utf-8'))
     
     #Fixing id3 tags
@@ -407,8 +410,7 @@ def main():
             # Parse and check arguments
             results = parser.parse_args()
             
-            song_list = []
-            song_list_deezer = []
+            song_list = []            
             if results.song:
                 song_list.append(qp(' '.join(results.song)))
 
@@ -424,80 +426,102 @@ def main():
                     # strip out any new lines
                     songs = [qp(song.strip()) for song in songs if song]
                     song_list.extend(songs)
-            if results.deezer_playlist_id:                
-                playlist_api_url = 'http://api.deezer.com/playlist/'+qp(results.deezer_playlist_id[0])
-		print("Fetching songs for playlist: "+playlist_api_url)                  
-		                
-                req = makeRequest(playlist_api_url, {})
-                response = req.content
-                playlist_json=response                
-                deezer_playlist = json.loads(playlist_json)
-                for track in deezer_playlist['tracks']["data"]:
-                    songname = track["title"].encode('utf-8')
-                    artist = track["artist"]["name"].encode('utf-8')
-                    fullsongname = songname + " - " + artist
-                    album_name = track["album"]["title"].encode('utf-8')
-                    song_cover_image = track["album"]["cover_big"].encode('utf-8')
-                    song_id3_info = {'songname': songname,'fullsongname': fullsongname,'artist': artist, 'album': album_name, 'cover_image': song_cover_image}
+            if results.deezer_playlist_id:
+                for deezer_playlist_id in results.deezer_playlist_id:
+                    song_list_deezer = []
+                    playlist_api_url = 'http://api.deezer.com/playlist/'+qp(deezer_playlist_id)
+                    print("Fetching songs for playlist: "+playlist_api_url)                  
+		                    
+                    req = makeRequest(playlist_api_url, {})
+                    response = req.content
+                    playlist_json=response                
+                    deezer_playlist = json.loads(playlist_json)
+                    print('Found '+str(deezer_playlist["nb_tracks"])+' songs')                
+                    
+                    for track in deezer_playlist['tracks']["data"]:
+                        songname = track["title"].encode('utf-8')
+                        artist = track["artist"]["name"].encode('utf-8')
+                        fullsongname = songname + " - " + artist
+                        album_name = track["album"]["title"].encode('utf-8')
+                        song_cover_image = track["album"]["cover_big"].encode('utf-8')
+                        song_id3_info = {'songname': songname,'fullsongname': fullsongname,'artist': artist, 'album': album_name, 'cover_image': song_cover_image}
+                        
+                        try:
+                            song_list_deezer.append(song_id3_info)
+                        except Exception as e:
+                            print(e)                        
+                            print(json.dumps(track, sort_keys=True, indent=4))
+                                        
+                    prompt = True if results.has_prompt else False
+                    quiet = True if results.is_quiet else False
 
-                    try:
-                        song_list_deezer.append(song_id3_info)
-                    except Exception as e:
-                        print(e)                        
-                        print(json.dumps(track, sort_keys=True, indent=4))
-                
-            	    
-            prompt = True if results.has_prompt else False
-            quiet = True if results.is_quiet else False
+                    downloads = []
+                    downloads_errors = []
+                    for song in song_list:
+                        downloads.append(query_and_download(song, prompt, quiet))
 
-            downloads = []
-            downloads_errors = []
-            for song in song_list:
-                downloads.append(query_and_download(song, prompt, quiet))
+                    if song_list_deezer:                    
+                        mp3_playlist_name = deezer_playlist["title"]+"_"+deezer_playlist_id+'.m3u'                        
+                        if os.path.exists(mp3_playlist_name):                            
+                            mp3_append_write = 'a' # append if already exists
+                            playlist = open(mp3_playlist_name,mp3_append_write)
+                        else:                            
+                            mp3_append_write = 'w' # make a new file if not
+                            playlist = open(mp3_playlist_name,mp3_append_write)
+                            #Extended M3U format used here
+                            playlist.write('#EXTM3U\n')
 
-            if song_list_deezer:
-	        #Open connection, uses root as name for playlist
-		playlist = open(deezer_playlist["title"]+"_"+results.deezer_playlist_id[0]+'.m3u','w')
-		#Extended M3U format used here
-		EXTENDED_M3U = 1
-		if EXTENDED_M3U == 1:
-		    playlist.write('#EXTM3U\n')
+                        new_song = 0
+                        for song in song_list_deezer:
+                           try:
+                               downloaded_song = query_and_download_deezer(song, prompt, quiet)
+                               downloads.append(downloaded_song)
+                               
+                               actualFilename = os.path.basename(downloaded_song)
+                               #Split then rejoin, remove extension
+                               filenameName = actualFilename.split('.')
+                               filenameName = '.'.join(filenameName[0:-1])
+                               write_to_playlist_file = True
+                               if mp3_append_write == 'a':
+                                   logfile = open(mp3_playlist_name, 'r')
+                                   loglist = logfile.readlines()
+                                   logfile.close()
+                                   found = False
+                                   for line in loglist:
+                                       if str('#EXTINF:'+filenameName) in line:                                           
+                                           write_to_playlist_file = False                               
+                               if write_to_playlist_file:                                   
+                                   #Add name based filename
+                                   playlist.write('#EXTINF:'+filenameName+'\n')
+                                   #Write relative location of file
+                                   playlist.write(os.path.join(downloaded_song)+'\n')
+                                   if mp3_append_write == 'a':
+                                       print("Song added to playlist")
+                                       new_song = new_song + 1
 
-                for song in song_list_deezer:
-                   try:
-			   downloaded_song = query_and_download_deezer(song, prompt, quiet) 
-		           downloads.append(downloaded_song)
+                               #break
+                           except Exception as e:
+                               print(e)
+                               downloads_errors.append(song["fullsongname"])
+                               filename = "errors_"+deezer_playlist_id+'.txt'
 
-		           if EXTENDED_M3U == 1:
-				actualFilename = os.path.basename(downloaded_song)
-				#Split then rejoin, remove extension
-				filenameName = actualFilename.split('.')
-				filenameName = '.'.join(filenameName[0:-1])
-				#Add name based filename
-				playlist.write('#EXTINF:'+filenameName+'\n')
-			   #Write relative location of file
-			   playlist.write(os.path.join(downloaded_song)+'\n')
-		           #break
-		   except Exception as e:
-                       print(e)
-                       downloads_errors.append(song["fullsongname"])
-                       filename = "errors_"+results.deezer_playlist_id[0]+'.txt'
+                               if os.path.exists(filename):
+                                   append_write = 'a' # append if already exists
+                               else:
+                                   append_write = 'w' # make a new file if not
 
-		       if os.path.exists(filename):
-		           append_write = 'a' # append if already exists
-		       else:
-		           append_write = 'w' # make a new file if not
+                               error = open(filename,append_write)
+                               error.write(song["fullsongname"] + '\n')
+                               error.close()
 
-		       error = open(filename,append_write)
-		       error.write(song["fullsongname"] + '\n')
-		       error.close()
+                        playlist.close()
+                        print('New song found for this playlist: '+str(new_song)) 
+                    
+                    #print('Downloaded: %s' % ', '.join(downloads))
+                    if downloads_errors:
+                        print('Error Downloading: %s' % ', '.join(downloads_errors))
+                    print("\n======================END Playlist====================================\n\n")  
 
-
-		
-            	playlist.close()
-            #print('Downloaded: %s' % ', '.join(downloads))
-            if downloads_errors:
-                print('Error Downloading: %s' % ', '.join(downloads_errors))
 
 if __name__ == '__main__':
     main()
