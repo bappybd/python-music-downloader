@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+# -*- coding:utf-8 -*-
 
 from __future__ import print_function
 import os
@@ -104,9 +105,9 @@ def query_and_download(search, has_prompts=True, is_quiet=False):
 
     if not is_quiet:
         print('Searching...')
-
+    
     available = search_videos(search)
-
+    
     if not is_quiet:
         if not available:
             print('No results found matching your query.')
@@ -142,7 +143,7 @@ def query_and_download(search, has_prompts=True, is_quiet=False):
 
     if is_quiet:
         command_tokens.insert(1, '-q')
-
+    
     command = ' '.join(command_tokens)
 
 
@@ -244,14 +245,13 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
     search = song['fullsongname']   
     destination_filename = 'Download/'+search+'.mp3'
     if os.path.isfile(destination_filename):
-        print(destination_filename + " file already exists")
-	return destination_filename
+        #print(destination_filename + " file already exists")
+	    return destination_filename
    
     if not is_quiet:
-        print('Searching...')
-
-    available = search_videos(search)
-
+        print('Searching..."'+search+'"')
+    
+    available = search_videos(search)    
     if not is_quiet:
         if not available:
             print('No results found matching your query.')
@@ -259,7 +259,7 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
         else:
             if has_prompts:
                 print('Found:', '\n'.join(list_movies(available)))
-
+    
     # We only ask the user which one they want if prompts are on, of course
     if has_prompts and not is_quiet:
         choice = raw_input('Pick one: ')
@@ -273,10 +273,9 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
         if prompt.lower() not in valid:
             sys.exit()
     # Otherwise, just download the first in available list
-    else:
+    else:        
         title, video_link = available[0]
 
-    #'--output \'%(title)s.%(ext)s\'',
     command_tokens = [
         'youtube-dl',
         '--extract-audio',
@@ -288,20 +287,20 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
     if is_quiet:
         command_tokens.insert(1, '-q')
 
-    command = ' '.join(command_tokens)
-
+    #command = ' '.join(command_tokens)
+    command = ' '.join(x.decode('utf-8') for x in command_tokens)
+        
     # Youtube-dl is a proof that god exists.
     if not is_quiet:
-        print('Downloading')
-        print(command)
-    os.system(command)
+        print('Downloading..."'+command+'"')        
+    os.system(command.encode('utf-8'))
     
     #Fixing id3 tags
     try:
         print ('Fixing id3 tags')
         list_name = song['fullsongname']
         artist = song['artist']
-        track_name = song['songname']        
+        track_name = song['songname']
         album_name=song['album']
         try:
             try:
@@ -319,14 +318,14 @@ def query_and_download_deezer(song, has_prompts=True, is_quiet=False):
                 return s[:location].strip()
             else:
                 return s.strip()
-
+        
         artist=fix_string(artist)
         track_name=fix_string(track_name)
         album_name=fix_string(album_name)
-
-        audiofile.tag.artist = unicode(artist)
-        audiofile.tag.title = unicode(track_name)
-        audiofile.tag.album = unicode(album_name)
+        
+        audiofile.tag.artist = unicode(artist.decode('utf8'))
+        audiofile.tag.title = unicode(track_name.decode('utf8'))
+        audiofile.tag.album = unicode(album_name.decode('utf8'))
         
         image_link= song['cover_image']
         title = unicode(title, errors='replace').encode('utf8')        
@@ -425,9 +424,9 @@ def main():
                     # strip out any new lines
                     songs = [qp(song.strip()) for song in songs if song]
                     song_list.extend(songs)
-            if results.deezer_playlist_id:
+            if results.deezer_playlist_id:                
                 playlist_api_url = 'http://api.deezer.com/playlist/'+qp(results.deezer_playlist_id[0])
-		print(playlist_api_url)                
+		print("Fetching songs for playlist: "+playlist_api_url)                  
 		                
                 req = makeRequest(playlist_api_url, {})
                 response = req.content
