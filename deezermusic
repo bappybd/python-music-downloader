@@ -290,8 +290,17 @@ def query_and_download_deezer(song, output_format='mp3', is_quiet=False):
     os.system(command.encode('utf-8'))
     
     #Fixing id3 tags
-    if output_format=='mp3':
-        fix_id3_tag(song, search, destination_filename, title)
+    if output_format=='mp3':        
+        try:
+            fix_id3_tag(song, search, destination_filename, title)
+        except Exception as e:
+            log('Unable to update Video metatag')
+    if output_format=='mp4':
+        log('Updating Video metatag')
+        try:
+            update_video_metatag(song, destination_filename)
+        except Exception as e:
+            log('Unable to update Video metatag')
     
     return destination_filename
 
@@ -354,6 +363,18 @@ def fix_id3_tag(song, search, destination_filename, title):
         log(e)
         log ('couldnt get album art')
 
+def update_video_metatag(song, destination_filename):
+    """
+    Update the metatag of the MP4 video file
+    """
+    currentDT = datetime.datetime.now()    
+    destination_filename=destination_filename.replace('"','\\"')
+    destination_filename_temp='Download/temp_'+str(currentDT)+'.mp4'
+    command = 'ffmpeg -loglevel panic -i "'+destination_filename+'" -metadata title="'+song['songname']+'" -metadata album="'+song['album']+'" -metadata artist="'+song['artist']+'" "'+destination_filename_temp+'"'
+    os.system(command.encode('utf-8'))
+    os.remove(destination_filename)
+    os.rename(destination_filename_temp, destination_filename)
+    
 def search_uses_flags(argstring, *flags):
     """
     Check if the given flags are being used in the command line argument string
@@ -385,7 +406,7 @@ def main():
     """
     argument_string = ' '.join(sys.argv[1:])
     search = ''
-
+           
     # No command-line arguments
     if not sys.argv[1:]:
         # We do not want to accept empty inputs :)
