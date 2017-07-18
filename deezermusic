@@ -16,6 +16,9 @@ import datetime
 import json
 #from PyLyrics import *
 
+# Global variables
+log = False
+
 if (sys.version_info > (3, 0)):
     from urllib.parse import quote_plus as qp
     raw_input = input
@@ -48,24 +51,6 @@ def makeRequest(url, hdr):
     req = requests.get(url, headers=hdr, proxies=proxyDict)
     return req
 
-def grab_albumart(search=''):
-    search = qp(search)
-    site = "https://www.google.com/search?site=&tbm=isch&source=hp&biw=1112&bih=613&q="+search+"&oq=backst&gs_l=img.3.0.0l10.1011.3209.0.4292.8.7.1.0.0.0.246.770.0j3j1.4.0..3..0...1.1.64.img..3.5.772.KyXkrVfTLT4#tbm=isch&q=back+street+boys+I+want+it+that+way"
-    hdr = {'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.11 (KHTML, like Gecko) Chrome/23.0.1271.64 Safari/537.11',
-           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-           'Accept-Charset': 'ISO-8859-1,utf-8;q=0.7,*;q=0.3',
-           'Accept-Encoding': 'none',
-           'Accept-Language': 'en-US,en;q=0.8',
-           'Connection': 'keep-alive'}
-    req = makeRequest(site, hdr)
-
-    content = str(req.content)
-    end =  content.find('jpg')
-    start= content[:end].rfind('http')
-
-    return content[start:end+3]
-
-
 def list_movies(movies):
     for idx, (title, _) in enumerate(movies):
         yield '[{}] {}'.format(idx, title.decode('utf-8').encode(sys.stdout.encoding))
@@ -95,145 +80,6 @@ def search_videos(query):
     response = makeRequest('https://www.youtube.com/results?search_query=' + query, {})
     return extract_videos(response.content)
 
-def query_and_download(search, has_prompts=True, is_quiet=False):
-    """
-    Queries the internet for given lyrics and downloads them into the current working directory.
-    If has_prompts is False, will download first available song.
-    If is_quiet is True, will run beautiful-soup in quiet mode. Prompts will also automatically be turned
-                         off in quiet mode. This is mainly so that instantmusic can be run as a background process.
-    Returns the title of the video downloaded from.
-    """
-
-    if not is_quiet:
-        print('Searching...')
-    
-    available = search_videos(search)
-    
-    if not is_quiet:
-        if not available:
-            print('No results found matching your query.')
-            sys.exit(2) # Indicate failure using the exit code
-        else:
-            if has_prompts:
-                print('Found:', '\n'.join(list_movies(available)))
-
-    # We only ask the user which one they want if prompts are on, of course
-    if has_prompts and not is_quiet:
-        choice = raw_input('Pick one: ')
-        while not(choice.isdigit()) or not(0 <= int(choice) < len(available)):
-            print("Oups, that was wrong. Try again!")
-            choice = raw_input('Pick one: ')
-        title, video_link = available[int(choice)]
-
-        valid = ['Y', 'y', '']
-        prompt = raw_input('Download "%s"? (y/n) ' % title)
-        if prompt.lower() not in valid:
-            sys.exit()
-    # Otherwise, just download the first in available list
-    else:
-        title, video_link = available[0]
-
-
-    command_tokens = [
-        'youtube-dl',
-        '--extract-audio',
-        '--audio-format mp3',
-        '--audio-quality 0',
-        '--output \'%(title)s.%(ext)s\'',
-        'https://www.youtube.com' + video_link]
-
-    if is_quiet:
-        command_tokens.insert(1, '-q')
-    
-    command = ' '.join(command_tokens)
-
-
-    # Youtube-dl is a proof that god exists.
-    if not is_quiet:
-        print('Downloading')
-    os.system(command)
-    
-    #Fixing id3 tags
-    try:
-        print ('Fixing id3 tags')
-        list_name = title
-        artist = ''
-        track_name = title
-        if '-' in title:
-            list_name = title.split('-')
-            artist=list_name[0]
-            track_name = list_name[1]
-        album_name=''
-        try:
-            try:
-                audiofile = eyed3.load((title+'.mp3'))
-            except:
-                audiofile = eyed3.load((title+'.m4a')) 
-
-            url = 'https://www.google.com/search?q='+qp(title)
-            req = makeRequest(url, {})
-            response = req.content
-            result=response
-            lyrics_html = get_lyrics_url(result) 
-            a = makeRequest(lyrics_html, {})
-            print (lyrics_html)
-            html_doc=  a.content
-            soup = BeautifulSoup(html_doc, 'html.parser')
-            try:
-                album_name = soup.find(id = "album-name-link").text
-            except:
-                print ('Cant get album name')
-            try:
-                lyrics = ('')
-                raw_lyrics= (soup.findAll('p', attrs={'class' : 'verse'}))
-                for each_line in raw_lyrics:
-                    lyrics = lyrics + str(each_line.get_text()) + '\n'
-                print (lyrics)
-                audiofile.tag.lyrics.set(u''+lyrics)
-            except:
-                print ('cant get lyrics')
-        except Exception as e:
-            print(e)
-            print ('error getting album and lyrics')
-
-        print (artist,track_name,album_name)
-
-        def fix_string(s):
-            location = s.find('[')
-            if location != -1:
-                return s[:location].strip()
-            else:
-                return s.strip()
-
-        artist=fix_string(artist)
-        track_name=fix_string(track_name)
-        album_name=fix_string(album_name)
-
-        audiofile.tag.artist = unicode(artist)
-        audiofile.tag.title = unicode(track_name)
-        audiofile.tag.album = unicode(album_name)
-
-        search =  title[:-4]
-        print ('Downloading album art..')
-        image_link= grab_albumart(search)
-        title = unicode(title, errors='replace').encode('utf8')
-        print ('Fixing '+title)
-        eyed3.log.setLevel("ERROR")
-        if audiofile.tag is None:
-            audiofile.tag = eyed3.id3.Tag()
-            audiofile.tag.file_info = eyed3.id3.FileInfo("foo.id3")
-        response = makeRequest(image_link, {}).content
-        imagedata = response
-
-        audiofile.tag.images.set(0,imagedata,"image/jpeg",u"Album Art")
-        audiofile.tag.save()
-        print ('Fixed')
-    except Exception as e: 
-        print(e)
-        print ('couldnt get album art')
-
-    return title
-
 def query_and_download_deezer(song, output_format='mp3', is_quiet=False):
     """
     Queries the internet for given lyrics and downloads them into the current working directory.
@@ -246,10 +92,13 @@ def query_and_download_deezer(song, output_format='mp3', is_quiet=False):
     search = song['fullsongname']
     if output_format=='mp4':
         search_text = search # search the music video
+        download_dir = 'videos'
+        destination_filename = download_dir+'/'+search+'.mp4'
     else:
         search_text = search+' lyrics' # search youtube for a lyrics video instead of Music video
-    destination_filename = 'Download/'+search+'.mp4' if output_format=='mp4' else 'Download/'+search+'.mp3'
-    
+        download_dir = 'songs'
+        destination_filename = download_dir+'/'+search+'.mp3'
+
     # If file already exists then return only the filepath.
     if os.path.isfile(destination_filename):
         #print(destination_filename + " file already exists")
@@ -269,9 +118,9 @@ def query_and_download_deezer(song, output_format='mp3', is_quiet=False):
     if output_format=='mp4':
 	    command_tokens = [
 		'youtube-dl',
-		'--recode-video',
-		'mp4',
-                '--output "Download/'+search+'.%(ext)s"',
+        '-f \'bestvideo[ext=mp4]+bestaudio[ext=m4a]\'',
+        '--output '+download_dir+'"/'+search+'.%(ext)s"',
+        '--add-metadata',
 		'https://www.youtube.com' + video_link]
     else:
         command_tokens = [
@@ -280,11 +129,11 @@ def query_and_download_deezer(song, output_format='mp3', is_quiet=False):
 		'--extract-audio',
 		'--audio-format mp3',        
 		'--audio-quality 0',
-		'--output "Download/'+search+'.%(ext)s"',
+		'--add-metadata',
+		'--output '+download_dir+'"/'+search+'.%(ext)s"',
 		'https://www.youtube.com' + video_link]    
     
     command = ' '.join(x.decode('utf-8') for x in command_tokens)
-    
     # Youtube-dl is a proof that god exists.    
     log('Downloading..."'+title.decode('utf-8')+', Youtube URL: https://youtube.com'+video_link+'"')
     os.system(command.encode('utf-8'))
@@ -295,12 +144,12 @@ def query_and_download_deezer(song, output_format='mp3', is_quiet=False):
             fix_id3_tag(song, search, destination_filename, title)
         except Exception as e:
             log('Unable to update Video metatag')
-    if output_format=='mp4':
-        log('Updating Video metatag')
-        try:
-            update_video_metatag(song, destination_filename)
-        except Exception as e:
-            log('Unable to update Video metatag')
+    #if output_format=='mp4':
+    #    log('Updating Video metatag')
+    #    try:
+    #        update_video_metatag(song, destination_filename,download_dir)
+    #    except Exception as e:
+    #        log('Unable to update Video metatag')
     
     return destination_filename
 
@@ -309,37 +158,39 @@ def fix_id3_tag(song, search, destination_filename, title):
     """
     Fixing audio id3 tags.
     """
+    
     try:
         print ('Fixing audio id3 tags')
         list_name = song['fullsongname']
         artist = song['artist']
         track_name = song['songname']
         album_name=song['album']
+        
         try:
-            try:
-                audiofile = eyed3.load((destination_filename))
-            except:
-                log ('couldnt get find audio file for ID3 tag')
-                return False
+            audiofile = eyed3.load((destination_filename))
+        except:
+            log ('couldnt get find audio file for ID3 tag')
+            return False
+        
+        try:
+            def fix_string(s):
+                location = s.find('[')
+                if location != -1:
+                    return s[:location].strip()
+                else:
+                    return s.strip()
             
-        except Exception as e:
-            log(e)
-            log ('error getting album and lyrics')
+            artist=fix_string(artist)
+            track_name=fix_string(track_name)
+            album_name=fix_string(album_name)
+            
+            audiofile.tag.artist = unicode(artist.decode('utf8'))
+            audiofile.tag.title = unicode(track_name.decode('utf8'))
+            audiofile.tag.album = unicode(album_name.decode('utf8'))
+        except:
+            log ('Unable to fix ID3 tag string unicode')
+            return False
         
-        def fix_string(s):
-            location = s.find('[')
-            if location != -1:
-                return s[:location].strip()
-            else:
-                return s.strip()
-        
-        artist=fix_string(artist)
-        track_name=fix_string(track_name)
-        album_name=fix_string(album_name)
-        
-        audiofile.tag.artist = unicode(artist.decode('utf8'))
-        audiofile.tag.title = unicode(track_name.decode('utf8'))
-        audiofile.tag.album = unicode(album_name.decode('utf8'))
         
         image_link= song['cover_image']
         title = unicode(title, errors='replace').encode('utf8')
@@ -348,8 +199,13 @@ def fix_id3_tag(song, search, destination_filename, title):
         if audiofile.tag is None:
             audiofile.tag = eyed3.id3.Tag()
             audiofile.tag.file_info = eyed3.id3.FileInfo("foo.id3")
-        response = makeRequest(image_link, {}).content
-        imagedata = response
+        
+        try:            
+            response = makeRequest(image_link, {}).content
+            imagedata = response
+        except:
+            log ('Unable to get ID3 cover image')
+            return False
 
         audiofile.tag.images.set(0,imagedata,"image/jpeg",u"Album Art")
         audiofile.tag.save()
@@ -360,20 +216,22 @@ def fix_id3_tag(song, search, destination_filename, title):
         #audiofile.tag.lyrics.set(u''+lyrics)
         
     except Exception as e: 
-        log(e)
+        print('Error on line {}'.format(sys.exc_info()[-1].tb_lineno), type(e).__name__, e)
         log ('couldnt get album art')
 
-def update_video_metatag(song, destination_filename):
+def update_video_metatag(song, destination_filename,video_dir):
     """
     Update the metatag of the MP4 video file
-    """
+    """  
+    return False  
     currentDT = datetime.datetime.now()    
     destination_filename=destination_filename.replace('"','\\"')
-    destination_filename_temp='Download/temp_'+str(currentDT)+'.mp4'
-    command = 'ffmpeg -loglevel panic -i "'+destination_filename+'" -metadata title="'+song['songname']+'" -metadata album="'+song['album']+'" -metadata artist="'+song['artist']+'" "'+destination_filename_temp+'"'
+    destination_filename_temp=video_dir+'/temp_'+str(currentDT)+'.mp4'    
+    os.rename(destination_filename, destination_filename_temp) 
+    command = 'ffmpeg -loglevel panic -i "'+destination_filename_temp+'" -metadata title="'+song['songname']+'" -metadata album="'+song['album']+'" -metadata artist="'+song['artist']+'" "'+destination_filename+'"'
     os.system(command.encode('utf-8'))
-    os.remove(destination_filename)
-    os.rename(destination_filename_temp, destination_filename)
+    os.remove(destination_filename_temp)
+    
     
 def search_uses_flags(argstring, *flags):
     """
@@ -386,19 +244,25 @@ def search_uses_flags(argstring, *flags):
 
 def log(msg):
     print(msg)
-    filename = "log_deezer.txt"
-    try:
-        if os.path.exists(filename):
-            append_write = 'a' # append if already exists
-        else:
-            append_write = 'w' # make a new file if not
-        logmsg = open(filename,append_write)
-        logmsg.write(msg + '\n')
-        logmsg.close()
-            
-    except Exception as e:
-        print(e)
-        print ('Unable to log')
+    global log
+    if log==True: 
+        filename = "log_deezer.txt"
+        try:
+            if os.path.exists(filename):
+                append_write = 'a' # append if already exists
+            else:
+                append_write = 'w' # make a new file if not
+            logmsg = open(filename,append_write)
+            logmsg.write(msg + '\n')
+            logmsg.close()
+                
+        except Exception as e:
+            print(e)
+            print ('Unable to log')
+
+def test_playlist_data():
+    playlistJson = {"id":1963962142,"title":"Today's Best Pop","description":"Your number 1 stop for the best pop in the world. Updated Weekly.","duration":14009,"public":True,"is_loved_track":False,"collaborative":False,"rating":0,"nb_tracks":70,"fans":208581,"link":"http:\/\/www.deezer.com\/playlist\/1963962142","share":"http:\/\/www.deezer.com\/playlist\/1963962142?utm_source=deezer&utm_content=playlist-1963962142&utm_term=0_1500361148&utm_medium=web","picture":"http:\/\/api.deezer.com\/playlist\/1963962142\/image","picture_small":"http:\/\/e-cdn-images.deezer.com\/images\/playlist\/43736f14f2837ff1002c548178f2e6d1\/56x56-000000-80-0-0.jpg","picture_medium":"http:\/\/e-cdn-images.deezer.com\/images\/playlist\/43736f14f2837ff1002c548178f2e6d1\/250x250-000000-80-0-0.jpg","picture_big":"http:\/\/e-cdn-images.deezer.com\/images\/playlist\/43736f14f2837ff1002c548178f2e6d1\/500x500-000000-80-0-0.jpg","picture_xl":"http:\/\/e-cdn-images.deezer.com\/images\/playlist\/43736f14f2837ff1002c548178f2e6d1\/1000x1000-000000-80-0-0.jpg","checksum":"41546bea082b514d595f4c1b4b0349b3","tracklist":"http:\/\/api.deezer.com\/playlist\/1963962142\/tracks","creation_date":"2016-06-25 12:18:04","creator":{"id":753546365,"name":"Pop Music Editor","tracklist":"http:\/\/api.deezer.com\/user\/753546365\/flow","type":"user"},"type":"playlist","tracks":{"data":[{"id":143172578,"readable":False,"title":"Pretty Girl (Cheat Codes X CADE Remix)","title_short":"Pretty Girl","title_version":"(Cheat Codes X CADE Remix)","link":"http:\/\/www.deezer.com\/track\/143172578","duration":193,"rank":965881,"explicit_lyrics":True,"preview":"https:\/\/e-cdns-preview-4.dzcdn.net\/strea\/4eed89391d3dedecab59f0da0e8390fe-4.mp3","time_add":1497431964,"artist":{"id":8814864,"name":"Maggie Lindemann","link":"http:\/\/www.deezer.com\/artist\/8814864","tracklist":"http:\/\/api.deezer.com\/artist\/8814864\/top?limit=50","type":"artist"},"album":{"id":15498606,"title":"Pretty Girl","cover":"http:\/\/api.deezer.com\/album\/15498606\/image","cover_small":"http:\/\/e-cdn-images.deezer.com\/images\/cover\/bca69583b74747f5bad7c0d16b16b915\/56x56-000000-80-0-0.jpg","cover_medium":"http:\/\/e-cdn-images.deezer.com\/images\/cover\/bca69583b74747f5bad7c0d16b16b915\/250x250-000000-80-0-0.jpg","cover_big":"http:\/\/e-cdn-images.deezer.com\/images\/cover\/bca69583b74747f5bad7c0d16b16b915\/500x500-000000-80-0-0.jpg","cover_xl":"http:\/\/e-cdn-images.deezer.com\/images\/cover\/bca69583b74747f5bad7c0d16b16b915\/1000x1000-000000-80-0-0.jpg","tracklist":"http:\/\/api.deezer.com\/album\/15498606\/tracks","type":"album"},"type":"track"}],"checksum":"41546bea082b514d595f4c1b4b0349b3"}}
+    return playlistJson
 
 def main():
     """
@@ -406,166 +270,145 @@ def main():
     """
     argument_string = ' '.join(sys.argv[1:])
     search = ''
-           
+    
     # No command-line arguments
     if not sys.argv[1:]:
         # We do not want to accept empty inputs :)
-        while search == '':
-            search = raw_input('Enter songname / lyrics / artist.. or whatever\n> ')
-        search = qp(search)
-        downloaded = query_and_download(search)
+        print("Invalid parameters. Please use command like `python deezermusic -mp3 -playlist <deezer_playlist_id>`")
+        sys.exit() 
 
     # Command-line arguments detected!
     else:
-        # No flags at all are specified
-        if not search_uses_flags(argument_string, '-s', '-i', '-f', '-p', '-q'):
-            search = qp(' '.join(sys.argv[1:]))
-            downloaded = query_and_download(search)
+        # Lots of parser-building fun!
+        import argparse
+        parser = argparse.ArgumentParser(description='Instantly download any song!')
+        parser.add_argument('-t', action='store_true', dest='test_mode', help="Test the script with dummy data")
+        #parser.add_argument('-l', action='store_true', dest='enable_log', help="Enable logging") # Not working
+        parser.add_argument('-mp3', action='store_true', dest='output_mp3', help="Specify output format of the file as mp3")
+        parser.add_argument('-mp4', action='store_true', dest='output_mp4', help="Specify output format of the file as mp4")
+        parser.add_argument('-playlist', action='store', dest='deezer_playlist_id', nargs='+', help='Download a list of songs from a Deezer playlist ID')
 
-        # No input flags are specified
-        elif not search_uses_flags(argument_string, '-s', '-i', '-f'):
-            # Default to -s
-            lyrics = argument_string.replace('-p', '').replace('-q', '')
-            search = qp(lyrics)
-            downloaded = query_and_download(search, not search_uses_flags('-p'), search_uses_flags('-q'))
+        # Parse and check arguments
+        results = parser.parse_args()
+	    
+        # Log
+        #if results.enable_log:
+        #    global log
+        #    log = True
 
-        # Some input flags are specified
-        else:            
-            # Lots of parser-building fun!
-            import argparse
-            parser = argparse.ArgumentParser(description='Instantly download any song!')
-            parser.add_argument('-p', action='store_false', dest='has_prompt', help="Turn off download prompts")
-            parser.add_argument('-q', action='store_true', dest='is_quiet', help="Run in quiet mode. Automatically turns off prompts.")
-            parser.add_argument('-s', action='store', dest='song', nargs='+', help='Download a single song.')
-            parser.add_argument('-l', action='store', dest='songlist', nargs='+', help='Download a list of songs, with lyrics separated by a comma (e.g. "i tried so hard and got so far, blackbird singing in the dead of night, hey shawty it\'s your birthday).')
-            parser.add_argument('-f', action='store', dest='file', nargs='+', help='Download a list of songs from a file input. Each line in the file is considered one song.')
-            parser.add_argument('-mp3', action='store_true', dest='output_mp3', help="Specify output format of the file as mp3")
-            parser.add_argument('-mp4', action='store_true', dest='output_mp4', help="Specify output format of the file as mp4")
-            parser.add_argument('-playlist', action='store', dest='deezer_playlist_id', nargs='+', help='Download a list of songs from a Deezer playlist ID')
-
-
-            # Parse and check arguments
-            results = parser.parse_args()
-            
-            song_list = []            
-            if results.song:
-                song_list.append(qp(' '.join(results.song)))
-
-            if results.songlist:
-                songs = ' '.join(results.songlist)
-                song_list.extend([qp(song) for song in songs.split(',')])
-
-            if results.file:
-                with open(results.file[0], 'r') as f:
-                    songs = f.readlines()
-                    # strip out any empty lines
-                    songs = filter(None, (song.rstrip() for song in songs))
-                    # strip out any new lines
-                    songs = [qp(song.strip()) for song in songs if song]
-                    song_list.extend(songs)
-            if results.deezer_playlist_id:                 
-                for deezer_playlist_id in results.deezer_playlist_id:
-                    song_list_deezer = []
-                    log("\n======================START Playlist====================================\n")
-                    currentDT = datetime.datetime.now()
-                    log("Date: "+str(currentDT))
-                    log("Playlist ID: "+qp(deezer_playlist_id)+"\n")
-                    playlist_api_url = 'http://api.deezer.com/playlist/'+qp(deezer_playlist_id)
-                    log("Fetching songs for playlist: "+playlist_api_url)                  
-		                    
+        if results.deezer_playlist_id:                 
+            for deezer_playlist_id in results.deezer_playlist_id:
+                song_list_deezer = []
+                log("\n")
+                currentDT = datetime.datetime.now()
+                log("Date: "+str(currentDT))
+                log("Playlist ID: "+qp(deezer_playlist_id)+"\n")
+                playlist_api_url = 'http://api.deezer.com/playlist/'+qp(deezer_playlist_id)
+                log("Fetching songs for playlist: "+playlist_api_url)
+		        
+                test_mode = results.test_mode
+                if test_mode:
+                    log('Test mode on')
+                    deezer_playlist = test_playlist_data()
+                else:
                     req = makeRequest(playlist_api_url, {})
                     response = req.content
-                    playlist_json=response                
+                    playlist_json=response
                     deezer_playlist = json.loads(playlist_json)
-                    log('Found '+str(deezer_playlist["nb_tracks"])+' songs')                
-                    
-                    for track in deezer_playlist['tracks']["data"]:
-                        songname = track["title"].encode('utf-8')
-                        artist = track["artist"]["name"].encode('utf-8')
-                        fullsongname = songname + " - " + artist
-                        album_name = track["album"]["title"].encode('utf-8')
-                        song_cover_image = track["album"]["cover_big"].encode('utf-8')
-                        song_id3_info = {'songname': songname,'fullsongname': fullsongname,'artist': artist, 'album': album_name, 'cover_image': song_cover_image}
-                        
-                        try:
-                            song_list_deezer.append(song_id3_info)
-                        except Exception as e:
-                            print(e)                        
-                            print(json.dumps(track, sort_keys=True, indent=4))
-                                        
-                    prompt = True if results.has_prompt else False
-                    quiet = True if results.is_quiet else False
-                    output_format = 'mp4' if results.output_mp4 else 'mp3'
-		    
-                    downloads = []
-                    downloads_errors = []
-                    for song in song_list:
-                        downloads.append(query_and_download(song, prompt, quiet))
+                
+                try:
+                    if deezer_playlist["error"]:
+                        log('Error: Unable to extract playlist - "'+deezer_playlist['error']['message']+'"')
+                        break
+                    else:
+                        log('Found '+str(deezer_playlist['nb_tracks'])+' songs')
+                except Exception as e:
+                    log('Found '+str(deezer_playlist['nb_tracks'])+' songs')
+                
+                
+                for track in deezer_playlist['tracks']["data"]:
+		            songname = track["title"].encode('utf-8')
+		            artist = track["artist"]["name"].encode('utf-8')
+		            fullsongname = songname + " - " + artist
+		            album_name = track["album"]["title"].encode('utf-8')
+		            song_cover_image = track["album"]["cover_big"].encode('utf-8')
+		            song_id3_info = {'songname': songname,'fullsongname': fullsongname,'artist': artist, 'album': album_name, 'cover_image': song_cover_image}
+		            
+		            try:
+		                song_list_deezer.append(song_id3_info)
+		            except Exception as e:
+		                print(e)                        
+		                print(json.dumps(track, sort_keys=True, indent=4))
+		                            
+                prompt = False
+                quiet =  False
+                output_format = 'mp4' if results.output_mp4 else 'mp3'
 
-                    if song_list_deezer:
-                        if output_format=='mp3':
-		                mp3_playlist_name = deezer_playlist["title"]+"_"+deezer_playlist_id+'.m3u'                        
-		                if os.path.exists(mp3_playlist_name):                            
-		                    mp3_append_write = 'a' # append if already exists
-		                    playlist = open(mp3_playlist_name,mp3_append_write)
-		                else:                            
-		                    mp3_append_write = 'w' # make a new file if not
-		                    playlist = open(mp3_playlist_name,mp3_append_write)
-		                    #Extended M3U format used here
-		                    playlist.write('#EXTM3U\n')
+                downloads = []
+                downloads_errors = []
+                if song_list_deezer:
+		            if output_format=='mp3':
+			            mp3_playlist_name = deezer_playlist["title"]+"_"+deezer_playlist_id+'.m3u'                        
+			            if os.path.exists(mp3_playlist_name):                            
+			                mp3_append_write = 'a' # append if already exists
+			                playlist = open(mp3_playlist_name,mp3_append_write)
+			            else:                            
+			                mp3_append_write = 'w' # make a new file if not
+			                playlist = open(mp3_playlist_name,mp3_append_write)
+			                #Extended M3U format used here
+			                playlist.write('#EXTM3U\n')
 
-                        new_song = 0
-                        for song in song_list_deezer:
-                           try:
-                               downloaded_song = query_and_download_deezer(song, output_format, quiet)
-                               downloads.append(downloaded_song)
-                               
-                               actualFilename = os.path.basename(downloaded_song)
-                               #Split then rejoin, remove extension
-                               filenameName = actualFilename.split('.')
-                               filenameName = '.'.join(filenameName[0:-1])
-                               if output_format=='mp3':
-		                       write_to_playlist_file = True
-		                       if mp3_append_write == 'a':
-		                           logfile = open(mp3_playlist_name, 'r')
-		                           loglist = logfile.readlines()
-		                           logfile.close()
-		                           found = False
-		                           for line in loglist:
-		                               if str('#EXTINF:'+filenameName) in line:                                           
-		                                   write_to_playlist_file = False                               
-		                       if write_to_playlist_file:                                   
-		                           #Add name based filename
-		                           playlist.write('#EXTINF:'+filenameName+'\n')
-		                           #Write relative location of file
-		                           playlist.write(os.path.join(downloaded_song)+'\n')
-		                           if mp3_append_write == 'a':
-		                               log("Song added to playlist")
-		                               new_song = new_song + 1
+		            new_song = 0
+		            for song in song_list_deezer:                           
+		               try:
+		                   downloaded_song = query_and_download_deezer(song, output_format, quiet)
+		                   downloads.append(downloaded_song)
+		                   
+		                   actualFilename = os.path.basename(downloaded_song)
+		                   #Split then rejoin, remove extension
+		                   filenameName = actualFilename.split('.')
+		                   filenameName = '.'.join(filenameName[0:-1])
+		                   if output_format=='mp3':
+			                   write_to_playlist_file = True
+			                   if mp3_append_write == 'a':
+			                       logfile = open(mp3_playlist_name, 'r')
+			                       loglist = logfile.readlines()
+			                       logfile.close()
+			                       found = False
+			                       for line in loglist:
+			                           if str('#EXTINF:'+filenameName) in line:                                           
+			                               write_to_playlist_file = False                               
+			                   if write_to_playlist_file:                                   
+			                       #Add name based filename
+			                       playlist.write('#EXTINF:'+filenameName+'\n')
+			                       #Write relative location of file
+			                       playlist.write(os.path.join(downloaded_song)+'\n')
+			                       if mp3_append_write == 'a':
+			                           log("Song added to playlist")
+			                           new_song = new_song + 1
+		                   
+		               except Exception as e:
+		                   print(e)
+		                   downloads_errors.append(song["fullsongname"])
+		                   filename = "errors_"+deezer_playlist_id+'.txt'
 
-                               #break
-                           except Exception as e:
-                               print(e)
-                               downloads_errors.append(song["fullsongname"])
-                               filename = "errors_"+deezer_playlist_id+'.txt'
+		                   if os.path.exists(filename):
+		                       append_write = 'a' # append if already exists
+		                   else:
+		                       append_write = 'w' # make a new file if not
 
-                               if os.path.exists(filename):
-                                   append_write = 'a' # append if already exists
-                               else:
-                                   append_write = 'w' # make a new file if not
-
-                               error = open(filename,append_write)
-                               error.write(song["fullsongname"] + '\n')
-                               error.close()
-                            
-                        if output_format=='mp3':   
-                            playlist.close()
-                            log('New song found for this playlist: '+str(new_song)) 
-                    
-                    #print('Downloaded: %s' % ', '.join(downloads))
-                    if downloads_errors:
-                        log('Error Downloading: %s' % ', '.join(downloads_errors))
-                    log("\n======================END Playlist====================================\n\n")  
+		                   error = open(filename,append_write)
+		                   error.write(song["fullsongname"] + '\n')
+		                   error.close()
+		                
+		            if output_format=='mp3':   
+		                playlist.close()
+		                log('New song found for this playlist: '+str(new_song)) 
+		        
+                #print('Downloaded: %s' % ', '.join(downloads))
+                if downloads_errors:
+                     log('Error Downloading: %s' % ', '.join(downloads_errors))
+                log("\n======================END Playlist====================================\n\n")  
 
 
 if __name__ == '__main__':
